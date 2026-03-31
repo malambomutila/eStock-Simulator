@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>eStock Project Structure</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text-primary: #1a1a1a;
+    --text-secondary: #555;
+    --text-tertiary: #888;
+    --font-mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a1a;
+      --text-primary: #e0e0e0;
+      --text-secondary: #aaa;
+      --text-tertiary: #777;
+    }
+    .e1{background:#085041;color:#E1F5EE}
+    .e2{background:#3C3489;color:#EEEDFE}
+    .e3{background:#712B13;color:#FAECE7}
+    .e4{background:#633806;color:#FAEEDA}
+    .e5{background:#0C447C;color:#E6F1FB}
+    .all{background:#444441;color:#F1EFE8}
+  }
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg);
+    color: var(--text-primary);
+    padding: 32px;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 22px; font-weight: 500; margin-bottom: 20px; }
+  .tree{font-family:var(--font-mono);font-size:13px;line-height:1.9;color:var(--text-primary)}
+  .dir{font-weight:500;color:var(--text-primary)}
+  .file{color:var(--text-secondary)}
+  .desc{color:var(--text-tertiary);font-family:var(--font-sans);font-size:12px}
+  .owner{display:inline-block;padding:1px 6px;border-radius:4px;font-family:var(--font-sans);font-size:10px;font-weight:500;margin-left:6px}
+  .e1{background:#E1F5EE;color:#085041}
+  .e2{background:#EEEDFE;color:#26215C}
+  .e3{background:#FAECE7;color:#4A1B0C}
+  .e4{background:#FAEEDA;color:#412402}
+  .e5{background:#E6F1FB;color:#042C53}
+  .all{background:#F1EFE8;color:#2C2C2A}
+  .legend{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;font-family:var(--font-sans);font-size:12px}
+  .legend span{padding:2px 8px;border-radius:4px;font-weight:500}
+</style>
+</head>
+<body>
+<h1>eStock — Project structure</h1>
+<div class="legend">
+<span class="owner e1">Eng 1</span>
+<span class="owner e2">Eng 2</span>
+<span class="owner e3">Eng 3</span>
+<span class="owner e4">Eng 4</span>
+<span class="owner e5">Eng 5</span>
+<span class="owner all">Shared</span>
+</div>
+<div class="tree">
+<span class="dir">estock/</span><br>
+├── <span class="file">main.py</span> <span class="desc">— App entry point, boots all services</span><span class="owner all">Shared</span><br>
+├── <span class="file">requirements.txt</span> <span class="desc">— Python dependencies</span><span class="owner all">Shared</span><br>
+├── <span class="file">pyproject.toml</span> <span class="desc">— Project metadata</span><span class="owner all">Shared</span><br>
+├── <span class="file">.env.example</span> <span class="desc">— LLM API key template</span><span class="owner all">Shared</span><br>
+├── <span class="file">.gitignore</span><br>
+├── <span class="file">README.md</span> <span class="desc">— Setup &amp; run instructions</span><span class="owner e3">Eng 3</span><br>
+│<br>
+├── <span class="dir">core/</span> <span class="desc">— System backbone</span><br>
+│   ├── <span class="file">models.py</span> <span class="desc">— SQLAlchemy models (Drug, StockLevel, Prescription, AuditLog)</span><span class="owner e1">Eng 1</span><br>
+│   ├── <span class="file">database.py</span> <span class="desc">— DB engine, session factory, migrations</span><span class="owner e1">Eng 1</span><br>
+│   ├── <span class="file">schemas.py</span> <span class="desc">— Pydantic schemas for agent messages &amp; API</span><span class="owner e1">Eng 1</span><br>
+│   ├── <span class="file">orchestrator.py</span> <span class="desc">— Central dispatcher, task queue, conflict resolution</span><span class="owner e2">Eng 2</span><br>
+│   └── <span class="file">event_bus.py</span> <span class="desc">— Pub/sub event system (agent actions → dashboard)</span><span class="owner e2">Eng 2</span><br>
+│<br>
+├── <span class="dir">agents/</span> <span class="desc">— AI agent personas</span><br>
+│   ├── <span class="file">base_agent.py</span> <span class="desc">— Abstract base: LLM client, action parser, logging</span><span class="owner e2">Eng 2</span><br>
+│   ├── <span class="file">doctor_agent.py</span> <span class="desc">— Creates prescriptions, checks availability</span><span class="owner e3">Eng 3</span><br>
+│   ├── <span class="file">dispenser_agent.py</span> <span class="desc">— Fills Rx, deducts stock, logs dispensing</span><span class="owner e1">Eng 1</span><br>
+│   ├── <span class="file">stock_manager_agent.py</span> <span class="desc">— Receives stock, expiry checks, reorder alerts</span><span class="owner e4">Eng 4</span><br>
+│   └── <span class="file">gov_official_agent.py</span> <span class="desc">— Audits, anomaly detection, compliance reports</span><span class="owner e3">Eng 3</span><br>
+│<br>
+├── <span class="dir">api/</span> <span class="desc">— Backend endpoints</span><br>
+│   ├── <span class="file">routes.py</span> <span class="desc">— REST: /stock, /prescriptions, /alerts, /audit</span><span class="owner e5">Eng 5</span><br>
+│   └── <span class="file">websocket.py</span> <span class="desc">— Real-time event stream to dashboard</span><span class="owner e5">Eng 5</span><br>
+│<br>
+├── <span class="dir">dashboard/</span> <span class="desc">— Frontend UI</span><br>
+│   ├── <span class="file">app.py</span> <span class="desc">— Streamlit main layout &amp; page routing</span><span class="owner e5">Eng 5</span><br>
+│   ├── <span class="dir">components/</span><br>
+│   │   ├── <span class="file">stock_levels.py</span> <span class="desc">— Bar charts of current inventory</span><span class="owner e4">Eng 4</span><br>
+│   │   ├── <span class="file">activity_feed.py</span> <span class="desc">— Real-time ticker of agent actions</span><span class="owner e4">Eng 4</span><br>
+│   │   ├── <span class="file">alerts_panel.py</span> <span class="desc">— Low stock, expiry, anomaly alerts</span><span class="owner e4">Eng 4</span><br>
+│   │   └── <span class="file">audit_log.py</span> <span class="desc">— Filterable transaction history table</span><span class="owner e1">Eng 1</span><br>
+│   └── <span class="dir">static/</span><br>
+│       └── <span class="file">styles.css</span> <span class="desc">— Custom dashboard styling</span><span class="owner e5">Eng 5</span><br>
+│<br>
+├── <span class="dir">config/</span> <span class="desc">— Configuration</span><br>
+│   ├── <span class="file">settings.py</span> <span class="desc">— Env vars, DB path, LLM model config</span><span class="owner e1">Eng 1</span><br>
+│   └── <span class="file">prompts.py</span> <span class="desc">— System prompts for all 4 agent personas</span><span class="owner e3">Eng 3</span><br>
+│<br>
+├── <span class="dir">data/</span> <span class="desc">— Seed data</span><br>
+│   ├── <span class="file">drugs_catalog.json</span> <span class="desc">— 50+ medicines with names, categories, units</span><span class="owner e1">Eng 1</span><br>
+│   └── <span class="file">seed_stock.json</span> <span class="desc">— Initial stock levels &amp; expiry dates</span><span class="owner e1">Eng 1</span><br>
+│<br>
+├── <span class="dir">scripts/</span> <span class="desc">— Operational scripts</span><br>
+│   ├── <span class="file">seed_db.py</span> <span class="desc">— Populate DB from JSON seed files</span><span class="owner e1">Eng 1</span><br>
+│   ├── <span class="file">run_simulation.py</span> <span class="desc">— Run a full simulated day (15 Rx, 3 restocks…)</span><span class="owner e4">Eng 4</span><br>
+│   ├── <span class="file">demo_scenario.py</span> <span class="desc">— Curated demo: prescribe → dispense → alert → audit</span><span class="owner e3">Eng 3</span><br>
+│   └── <span class="file">generate_report.py</span> <span class="desc">— Export audit &amp; compliance reports to CSV</span><span class="owner e1">Eng 1</span><br>
+│<br>
+└── <span class="dir">tests/</span> <span class="desc">— Test suite</span><br>
+    ├── <span class="file">test_agents.py</span> <span class="desc">— Unit tests for each agent's actions</span><span class="owner e3">Eng 3</span><br>
+    ├── <span class="file">test_orchestrator.py</span> <span class="desc">— Routing, conflict resolution, ordering</span><span class="owner e2">Eng 2</span><br>
+    ├── <span class="file">test_database.py</span> <span class="desc">— CRUD, constraints, seed data integrity</span><span class="owner e1">Eng 1</span><br>
+    └── <span class="file">test_simulation.py</span> <span class="desc">— End-to-end simulation smoke test</span><span class="owner e5">Eng 5</span><br>
+</div>
+</body>
+</html>
