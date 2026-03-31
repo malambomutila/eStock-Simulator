@@ -1,0 +1,35 @@
+# Environment
+# .env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Database files — don't commit the SQLite DB
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Alembic versions (generated — commit migrations explicitly)
+# alembic/versions/
+
+# macOS
+.DS_Store
+
+# IDEs
+.idea/
+.vscode/
+*.swp
