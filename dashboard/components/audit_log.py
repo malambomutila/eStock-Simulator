@@ -271,7 +271,8 @@ def build_audit_log_tab(facility_id: str | None = None) -> None:
     # Pagination
     with gr.Row():
         prev_btn = gr.Button("← Previous", size="sm", scale=1)
-        page_info_md = gr.Markdown(value="", scale=4)
+        with gr.Column(scale=4):
+            page_info_md = gr.Markdown(value="")
         next_btn = gr.Button("Next →", size="sm", scale=1)
 
     gr.Markdown("---")

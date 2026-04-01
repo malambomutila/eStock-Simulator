@@ -67,6 +67,15 @@ class Settings(BaseSettings):
     api_host: str = Field(default="127.0.0.1")
     api_port: int = Field(default=8000)
     api_reload: bool = Field(default=True)
+    cors_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://127.0.0.1:7860",
+            "http://localhost:7860",
+            "http://127.0.0.1:8000",
+            "http://localhost:8000",
+        ],
+        description="Origins allowed by CORS for the REST API (e.g. Gradio on another port).",
+    )
 
     # Orchestrator (Eng 2)
     orchestrator_agent_timeout_seconds: float = Field(
