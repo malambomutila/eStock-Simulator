@@ -19,7 +19,7 @@ class PlaceholderDoctorAgent(BaseAgent):
         return self._fail(
             message,
             ActionType.SYSTEM_ERROR,
-            "Eng 3: DoctorAgent not implemented — use SimulationDoctorAgent for scripted demos.",
+            "PlaceholderDoctorAgent — use agents.doctor_agent.DoctorAgent (default in build_default_orchestrator) or SimulationDoctorAgent for tests.",
         )
 
 
@@ -41,5 +41,5 @@ class PlaceholderGovAgent(BaseAgent):
         return self._fail(
             message,
             ActionType.SYSTEM_ERROR,
-            "Eng 3: GovOfficialAgent not implemented.",
+            "PlaceholderGovAgent — use agents.gov_official_agent.GovOfficialAgent (default in build_default_orchestrator).",
         )
