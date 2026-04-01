@@ -57,17 +57,17 @@ All agents share a single LLM backend with distinct system prompts that shape th
 
 | Layer | Technology |
 |---|---|
-| Language | Python 3.11+ |
-| LLM | Claude API (via Anthropic SDK) |
+| Language | Python 3.12+ |
+| LLM | OpenAI API (`gpt-4o-mini` by default) |
 | Database | SQLite (via SQLAlchemy) |
 | API | FastAPI + WebSockets |
-| Dashboard | Streamlit |
+| Dashboard | Gradio |
 | Testing | pytest |
 
 ## Project structure
 
 ```
-estock/
+eStock-Simulator/
 ├── main.py                          # App entry point
 ├── requirements.txt
 ├── pyproject.toml
@@ -92,7 +92,7 @@ estock/
 │   └── websocket.py                 # Real-time event stream
 │
 ├── dashboard/                       # Frontend UI
-│   ├── app.py                       # Streamlit layout
+│   ├── app.py                       # Gradio layout
 │   └── components/
 │       ├── stock_levels.py          # Inventory bar charts
 │       ├── activity_feed.py         # Live agent action ticker
@@ -124,44 +124,42 @@ estock/
 
 ### Prerequisites
 
-- Python 3.11 or higher
-- An Anthropic API key (or whichever LLM provider you configure)
+- Python 3.12 or higher
+- An OpenAI API key
+- [`uv`](https://github.com/astral-sh/uv) (recommended package manager)
 
 ### Installation
 
 ```bash
 # Clone the repository
 git clone https://github.com/your-org/estock.git
-cd estock
-
-# Create a virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+cd eStock-Simulator
 
 # Install dependencies
-pip install -r requirements.txt
+uv sync
 
 # Configure environment
 cp .env.example .env
-# Edit .env and add your API key
+# Edit .env and add your OPENAI_API_KEY
 ```
 
 ### Seed the database
 
 ```bash
-python scripts/seed_db.py
+python main.py --seed
 ```
 
 This populates the SQLite database with 50+ medicines, initial stock levels, and expiry dates.
+Use `--seed-reset` to drop and recreate the database before seeding.
 
 ### Run the application
 
 ```bash
-# Start the backend
-python main.py
+# Start the backend API (port 8000)
+python main.py --serve
 
 # In a separate terminal, start the dashboard
-streamlit run dashboard/app.py
+python main.py --dash
 ```
 
 ### Run the demo scenario
@@ -190,11 +188,16 @@ pytest tests/ -v
 
 | Variable | Description | Default |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Your LLM API key | — |
-| `LLM_MODEL` | Model identifier | `claude-sonnet-4-20250514` |
-| `DATABASE_URL` | SQLite connection string | `sqlite:///estock.db` |
-| `LOG_LEVEL` | Logging verbosity | `INFO` |
-| `DASHBOARD_PORT` | Streamlit port | `8501` |
+| `OPENAI_API_KEY` | Your OpenAI API key | — |
+| `LLM_MODEL` | Model identifier | `gpt-4o-mini` |
+| `LLM_TEMPERATURE` | Sampling temperature | `0.3` |
+| `LLM_MAX_TOKENS` | Token cap per agent call | `1024` |
+| `DATABASE_URL` | SQLite connection string | `sqlite:///data/estock.db` |
+| `SIMULATION_FACILITY_ID` | Facility being simulated | `FACILITY-001` |
+| `LOW_STOCK_THRESHOLD_PCT` | Fraction of reorder threshold for low-stock alert | `0.20` |
+| `REORDER_ALERT_THRESHOLD_DAYS` | Days until expiry that triggers a reorder alert | `90` |
+| `ANOMALY_SPIKE_MULTIPLIER` | Consumption multiple over 30-day avg to flag anomaly | `3.0` |
+| `API_HOST` | FastAPI host | `127.0.0.1` |
 | `API_PORT` | FastAPI port | `8000` |
 
 ## Demo walkthrough
