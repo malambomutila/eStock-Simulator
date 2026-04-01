@@ -1,11 +1,8 @@
 """
-BaseAgent stub — Eng1 placeholder until Eng2 delivers the full implementation.
+Abstract base for all agent personas (Eng 2).
 
-Eng2 owns this file. This stub exists so dispenser_agent.py and any other
-agent can import and inherit from BaseAgent during development without a
-circular or missing-module error.
-
-DO NOT add logic here — Eng2 will overwrite this file entirely.
+Subclasses implement ``handle()`` and set ``role``. Helpers build
+``AgentResponse`` and optional ``AuditLogCreate`` rows consistently.
 """
 
 from __future__ import annotations

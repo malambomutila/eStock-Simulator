@@ -27,13 +27,17 @@ def _configure_sqlite(engine):
         cursor.close()
 
 
-engine = create_engine(
-    settings.database_url,
-    echo=settings.db_echo_sql,
-    connect_args={"check_same_thread": False} if "sqlite" in settings.database_url else {},
-)
+def _make_engine(url: str):
+    eng = create_engine(
+        url,
+        echo=settings.db_echo_sql,
+        connect_args={"check_same_thread": False} if "sqlite" in url else {},
+    )
+    _configure_sqlite(eng)
+    return eng
 
-_configure_sqlite(engine)
+
+engine = _make_engine(settings.database_url)
 
 SessionLocal = sessionmaker(
     bind=engine,
@@ -41,6 +45,26 @@ SessionLocal = sessionmaker(
     autoflush=False,
     expire_on_commit=False,
 )
+
+
+def rebind_engine(url: str) -> None:
+    """
+    Replace the process-global engine and session factory.
+
+    Intended for tests and isolated scripts; call ``init_db()`` after rebind.
+    """
+    global engine, SessionLocal
+    try:
+        engine.dispose(close=True)
+    except Exception:  # noqa: BLE001
+        pass
+    engine = _make_engine(url)
+    SessionLocal = sessionmaker(
+        bind=engine,
+        autocommit=False,
+        autoflush=False,
+        expire_on_commit=False,
+    )
 
 
 @contextmanager
