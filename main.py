@@ -19,7 +19,7 @@ def main() -> None:
     parser.add_argument("--seed", action="store_true", help="Seed the database")
     parser.add_argument("--seed-reset", action="store_true", help="Reset and re-seed the database")
     parser.add_argument("--serve", action="store_true", help="Start the FastAPI API server")
-    parser.add_argument("--dash", action="store_true", help="Launch the Streamlit dashboard")
+    parser.add_argument("--dash", action="store_true", help="Launch the Gradio dashboard")
     args = parser.parse_args()
 
     if args.seed or args.seed_reset:
