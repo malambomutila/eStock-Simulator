@@ -68,6 +68,19 @@ class Settings(BaseSettings):
     api_port: int = Field(default=8000)
     api_reload: bool = Field(default=True)
 
+    # Orchestrator (Eng 2)
+    orchestrator_agent_timeout_seconds: float = Field(
+        default=120.0,
+        ge=1.0,
+        description="Per-attempt timeout when awaiting agent.handle().",
+    )
+    orchestrator_max_retries: int = Field(
+        default=2,
+        ge=0,
+        le=10,
+        description="Retries after TimeoutError only (not for business failures).",
+    )
+
     # Paths
     @property
     def data_dir(self) -> Path:
