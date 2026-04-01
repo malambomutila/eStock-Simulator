@@ -33,8 +33,17 @@ python main.py --dash
 pytest tests/ -v
 
 # Run a single test
-pytest tests/test_agents.py::test_name -v
+pytest tests/test_orchestrator.py::test_followup_dispense_message_builds_dispenser_envelope -v
+
+# Orchestrator dry run (doctor → auto-dispense chain; use --seed on first run)
+PYTHONPATH=. python scripts/orchestrator_dry_run.py --seed
 ```
+
+## Team status vs Eng 3 PR notes
+
+Eng 2 has landed the orchestrator (priority queue, role routing, stock locks, doctor → dispenser follow-up), the in-process event bus, timeout/retry policy in `config/settings.py`, and `tests/test_orchestrator.py`. Use `build_default_orchestrator()` in `core/orchestrator.py` to register `DoctorAgent`, `GovOfficialAgent`, `DispenserAgent`, and the stock-manager placeholder.
+
+**Still accurate from that PR:** `scripts/demo_scenario.py` remains **blocked primarily on Eng 4** (`agents/stock_manager_agent.py`, `scripts/run_simulation.py`) for the full scripted day; Eng 5 is still needed for REST/WebSocket + `dashboard/app.py` live wiring. Eng 3’s manual test plan (instantiate agents, call `handle()`) remains valid.
 
 ## Architecture
 
@@ -48,7 +57,7 @@ Dashboard (Gradio) ← Event Bus ← all agent actions
 
 ### Key Design Patterns
 
-**Agent message passing**: All agents communicate via typed `AgentMessage` / `AgentResponse` envelopes (defined in `core/schemas.py`). The orchestrator routes by `action_type` and `sender_role`. Agents that touch shared stock set `requires_lock=True` so the orchestrator acquires a lock before dispatch.
+**Agent message passing**: All agents communicate via typed `AgentMessage` / `AgentResponse` envelopes (defined in `core/schemas.py`). The orchestrator routes by `recipient_role` and `action_type` (see `Orchestrator.dispatch_immediate` / `submit`). Agents that touch shared stock set `requires_lock=True` so the orchestrator acquires a per-`(facility_id, drug_id)` lock before dispatch.
 
 **FEFO dispensing**: The dispenser always consumes stock from the earliest-expiring batch first (`ORDER BY expiry_date ASC`) to minimize waste.
 
@@ -63,16 +72,18 @@ Dashboard (Gradio) ← Event Bus ← all agent actions
 | `core/models.py` | SQLAlchemy ORM: Drug, StockLevel, Prescription, AuditLog |
 | `core/schemas.py` | Pydantic v2 schemas; AgentMessage/AgentResponse envelopes |
 | `core/database.py` | Engine, SessionLocal, `get_db()`, `init_db()` |
-| `core/orchestrator.py` | *(not yet implemented)* Central dispatcher + task queue |
-| `core/event_bus.py` | *(not yet implemented)* Pub/sub for dashboard updates |
+| `core/orchestrator.py` | Central dispatcher, priority queue, stock locks, Rx→dispense follow-up |
+| `core/event_bus.py` | In-process pub/sub (`estock.agent.response`, `estock.orchestrator.task.completed`) |
 | `agents/base_agent.py` | Abstract base; `handle()`, `_ok()`, `_fail()`, `_make_audit_entry()` |
 | `agents/dispenser_agent.py` | Complete reference implementation of an agent |
 | `config/settings.py` | Pydantic BaseSettings; loads `.env`; exposes `settings` singleton |
-| `config/prompts.py` | *(not yet implemented)* LLM system prompts per agent persona |
+| `config/prompts.py` | LLM system prompts (doctor + government official) |
 | `data/drugs_catalog.json` | 50+ medicines; used by `scripts/seed_db.py` |
 | `data/seed_stock.json` | Initial batch inventory; used by `scripts/seed_db.py` |
 | `api/routes.py` | *(not yet implemented)* FastAPI REST endpoints |
+| `api/websocket.py` | *(not yet implemented)* Real-time stream (Eng 5; subscribe to event bus topics) |
 | `dashboard/app.py` | *(not yet implemented)* Gradio UI layout |
+| `scripts/orchestrator_dry_run.py` | Eng 2 — scripted Rx→dispense smoke run via orchestrator |
 
 ### Database Schema Highlights
 
@@ -116,12 +127,12 @@ Sourced from `stock_management_task_plan.xlsx` (4 phases, 3 milestones).
 | `core/schemas.py` | Eng 1 | 1 | ✓ Done | Pydantic schemas + AgentMessage envelopes |
 | `scripts/seed_db.py` | Eng 1 | 1 | ✓ Done | Seeds 50+ drugs + stock batches |
 | `agents/dispenser_agent.py` | Eng 1 | 2 | ✓ Done | FEFO dispensing, audit logging |
-| `core/orchestrator.py` | Eng 2 | 1 | ✗ Missing | Task queue, dispatcher, stock locking |
-| `core/event_bus.py` | Eng 2 | 1 | ✗ Missing | Pub/sub for dashboard real-time updates |
+| `core/orchestrator.py` | Eng 2 | 1 | ✓ Done | Task queue, dispatcher, stock locking, follow-ups |
+| `core/event_bus.py` | Eng 2 | 1 | ✓ Done | Pub/sub topics for Eng 5 bridge |
 | `agents/doctor_agent.py` | Eng 3 | 1 | ✓ Done | Create Rx, check availability, request restock |
 | `config/prompts.py` | Eng 3 | 1 | ✓ Done | LLM system prompts for doctor + gov official |
 | `agents/gov_official_agent.py` | Eng 3 | 2 | ✓ Done | Audit queries, flag anomalies, compliance report |
-| `scripts/demo_scenario.py` | Eng 3 | 3 | ✗ Blocked | Curated demo flow (needs Eng 2 + Eng 4 first) |
+| `scripts/demo_scenario.py` | Eng 3 | 3 | ✗ Blocked | Curated demo flow (needs Eng 4 simulation + Milestone 2 wiring; orchestrator is ready) |
 | `agents/stock_manager_agent.py` | Eng 4 | 1 | ✗ Missing | Receive stock, expiry alerts, reorder triggers |
 | `scripts/run_simulation.py` | Eng 4 | 2 | ✗ Missing | 15 Rx, 3 receipts, 2 expiry alerts, 1 anomaly |
 | `api/routes.py` | Eng 5 | 1 | ✗ Missing | FastAPI REST endpoints |

@@ -12,11 +12,12 @@ events (topic ``TOPIC_ORCHESTRATOR_CONFLICT`` is reserved for future use).
 Prescription → dispense chain
 ------------------------------
 On a **successful** ``AgentResponse`` from the doctor with
-``action_type == PRESCRIPTION_CREATED`` and a ``result`` dict containing
-``prescription_id``, ``drug_id``, ``facility_id``, ``doctor_agent_id``, and
-``quantity_prescribed``, the orchestrator enqueues a **follow-up**
-``AgentMessage`` to the dispenser with ``DISPENSING_STARTED``,
-``requires_lock=True``, and the same ``correlation_id``.
+``action_type == PRESCRIPTION_CREATED`` and a ``result`` dict containing at least
+``prescription_id``, ``drug_id``, and ``quantity_prescribed``, the orchestrator
+enqueues a **follow-up** to the dispenser. If ``facility_id`` or
+``doctor_agent_id`` are absent from ``result``, they are taken from the inbound
+``AgentMessage.facility_id`` and ``response.agent_id`` respectively (matches
+``DoctorAgent`` as shipped by Eng 3).
 """
 
 from __future__ import annotations
@@ -50,11 +51,19 @@ def _lock_key(message: AgentMessage) -> tuple[str, str] | None:
 
 
 def _followup_dispense_message(
-    orchestrator_id: str, response: AgentResponse
+    orchestrator_id: str,
+    response: AgentResponse,
+    source_message: AgentMessage | None = None,
 ) -> AgentMessage | None:
     if not response.success or response.action_type != ActionType.PRESCRIPTION_CREATED:
         return None
-    r = response.result or {}
+    r = dict(response.result or {})
+    # Eng 3 DoctorAgent includes prescription_id, drug_id, quantity_prescribed in result;
+    # facility_id and doctor_agent_id may come from the inbound message / handler agent id.
+    if "facility_id" not in r and source_message is not None:
+        r["facility_id"] = source_message.facility_id
+    if "doctor_agent_id" not in r:
+        r["doctor_agent_id"] = response.agent_id
     required = (
         "prescription_id",
         "drug_id",
@@ -252,7 +261,9 @@ class Orchestrator:
         else:
             resp = await self._invoke_agent_with_resilience(message)
 
-        follow = _followup_dispense_message(self._orchestrator_id, resp)
+        follow = _followup_dispense_message(
+            self._orchestrator_id, resp, source_message=message
+        )
         if follow:
             self.submit(follow)
         return resp
@@ -281,27 +292,23 @@ def build_default_orchestrator(
     bus: EventBus | None = None,
 ) -> Orchestrator:
     """
-    Factory: registers dispenser + stubs + optional simulation doctor (demo only).
+    Factory: Dispenser + Gov (real) + Stock (stub) + Doctor (real or simulation).
 
-    Eng 3/4 replace stubs with real personas; keep imports lazy to avoid cycles.
+    Use ``use_simulation_doctor=True`` in tests/dry runs when you want no LLM and a
+    minimal prescription path; default uses Eng 3's ``DoctorAgent``.
     """
     from agents.dispenser_agent import DispenserAgent
-    from agents.stub_agents import (
-        PlaceholderGovAgent,
-        PlaceholderStockManagerAgent,
-        PlaceholderDoctorAgent,
-    )
+    from agents.doctor_agent import DoctorAgent
+    from agents.gov_official_agent import GovOfficialAgent
+    from agents.stub_agents import PlaceholderStockManagerAgent
+    from agents.simulation_doctor import SimulationDoctorAgent
 
     orch = Orchestrator(bus=bus)
     orch.register(AgentRole.DISPENSER, DispenserAgent())
-
-    if use_simulation_doctor:
-        from agents.simulation_doctor import SimulationDoctorAgent
-
-        orch.register(AgentRole.DOCTOR, SimulationDoctorAgent())
-    else:
-        orch.register(AgentRole.DOCTOR, PlaceholderDoctorAgent())
-
+    orch.register(
+        AgentRole.DOCTOR,
+        SimulationDoctorAgent() if use_simulation_doctor else DoctorAgent(),
+    )
     orch.register(AgentRole.STOCK_MANAGER, PlaceholderStockManagerAgent())
-    orch.register(AgentRole.GOV_OFFICIAL, PlaceholderGovAgent())
+    orch.register(AgentRole.GOV_OFFICIAL, GovOfficialAgent())
     return orch

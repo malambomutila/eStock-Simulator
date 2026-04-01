@@ -91,6 +91,35 @@ def test_followup_skips_on_missing_keys():
     assert _followup_dispense_message("o", resp) is None
 
 
+def test_followup_merges_facility_and_doctor_from_eng3_style_result():
+    """DoctorAgent omits facility_id / doctor_agent_id in result — orchestrator fills them."""
+    resp = AgentResponse(
+        message_id="m1",
+        correlation_id="corr-eng3",
+        success=True,
+        action_type=ActionType.PRESCRIPTION_CREATED,
+        agent_id="DoctorAgent-deadbeef",
+        agent_role=AgentRole.DOCTOR,
+        result={
+            "prescription_id": "rx-1",
+            "drug_id": "d1",
+            "quantity_prescribed": 2,
+        },
+    )
+    src = AgentMessage(
+        sender_role=AgentRole.SYSTEM,
+        sender_id="sys",
+        recipient_role=AgentRole.DOCTOR,
+        action_type=ActionType.PRESCRIPTION_CREATED,
+        facility_id="FACILITY-ENG3",
+        payload={},
+    )
+    follow = _followup_dispense_message("orch", resp, source_message=src)
+    assert follow is not None
+    assert follow.payload["facility_id"] == "FACILITY-ENG3"
+    assert follow.payload["doctor_agent_id"] == "DoctorAgent-deadbeef"
+
+
 @pytest.mark.asyncio
 async def test_dispatch_unknown_role_returns_orchestrator_system_error():
     bus = EventBus()
@@ -221,8 +250,11 @@ async def test_timeout_returns_system_error(monkeypatch):
     assert "timed out" in (resp.error or "").lower()
 
 
+@pytest.mark.parametrize("use_simulation_doctor", [True, False])
 @pytest.mark.asyncio
-async def test_integration_prescription_to_dispense(seeded_sqlite_db, monkeypatch):
+async def test_integration_prescription_to_dispense(
+    seeded_sqlite_db, monkeypatch, use_simulation_doctor: bool
+):
     monkeypatch.setattr(settings, "orchestrator_agent_timeout_seconds", 60.0)
 
     with get_db() as session:
@@ -236,7 +268,7 @@ async def test_integration_prescription_to_dispense(seeded_sqlite_db, monkeypatc
         drug_id = sl.drug_id
         fac = settings.simulation_facility_id
 
-    orch = build_default_orchestrator(use_simulation_doctor=True)
+    orch = build_default_orchestrator(use_simulation_doctor=use_simulation_doctor)
     msg = AgentMessage(
         sender_role=AgentRole.SYSTEM,
         sender_id="pytest",
@@ -265,8 +297,8 @@ async def test_integration_prescription_to_dispense(seeded_sqlite_db, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_placeholder_doctor_fails_without_simulation():
-    """Default factory uses Eng 3 placeholder — prescription flow must opt into simulation."""
+async def test_real_doctor_rejects_incomplete_payload():
+    """Default factory registers Eng 3 DoctorAgent — empty prescription payload fails."""
     orch = build_default_orchestrator(use_simulation_doctor=False)
     msg = AgentMessage(
         sender_role=AgentRole.SYSTEM,
@@ -278,3 +310,22 @@ async def test_placeholder_doctor_fails_without_simulation():
     )
     resp = await orch.dispatch_immediate(msg)
     assert resp.success is False
+
+
+@pytest.mark.asyncio
+async def test_explicit_placeholder_doctor_still_returns_stub_error():
+    from agents.stub_agents import PlaceholderDoctorAgent
+
+    orch = Orchestrator()
+    orch.register(AgentRole.DOCTOR, PlaceholderDoctorAgent())
+    msg = AgentMessage(
+        sender_role=AgentRole.SYSTEM,
+        sender_id="t",
+        recipient_role=AgentRole.DOCTOR,
+        action_type=ActionType.PRESCRIPTION_CREATED,
+        facility_id=settings.simulation_facility_id,
+        payload={"drug_id": "x", "patient_id": "p", "quantity_prescribed": 1},
+    )
+    resp = await orch.dispatch_immediate(msg)
+    assert resp.success is False
+    assert "PlaceholderDoctorAgent" in (resp.error or "")
