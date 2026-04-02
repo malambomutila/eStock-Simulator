@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     api_host: str = Field(default="127.0.0.1")
     api_port: int = Field(default=8000)
     api_reload: bool = Field(default=True)
+    dashboard_port: int = Field(default=7860)
     cors_origins: list[str] = Field(
         default_factory=lambda: [
             "http://127.0.0.1:7860",
