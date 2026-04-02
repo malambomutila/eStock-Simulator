@@ -37,13 +37,21 @@ pytest tests/test_orchestrator.py::test_followup_dispense_message_builds_dispens
 
 # Orchestrator dry run (doctor → auto-dispense chain; use --seed on first run)
 PYTHONPATH=. python scripts/orchestrator_dry_run.py --seed
+
+# Full-day simulation (all agents; seed DB on first run)
+python scripts/run_simulation.py --seed
+python scripts/run_simulation.py --seed --verbose
+
+# Curated live demo (5 scenes; use --pause to narrate alongside the dashboard)
+python scripts/demo_scenario.py --seed
+python scripts/demo_scenario.py --pause
 ```
 
-## Team status vs Eng 3 PR notes
+## Team status
 
-Eng 2 has landed the orchestrator (priority queue, role routing, stock locks, doctor → dispenser follow-up), the in-process event bus, timeout/retry policy in `config/settings.py`, and `tests/test_orchestrator.py`. Use `build_default_orchestrator()` in `core/orchestrator.py` to register `DoctorAgent`, `GovOfficialAgent`, `DispenserAgent`, and the stock-manager placeholder.
+All 5 engineering tracks have landed. Use `build_default_orchestrator()` in `core/orchestrator.py` to register all agents (`DoctorAgent`, `GovOfficialAgent`, `DispenserAgent`, `StockManagerAgent`). The full end-to-end simulation runs via `scripts/run_simulation.py`.
 
-**Still accurate from that PR:** `scripts/demo_scenario.py` remains **blocked primarily on Eng 4** (`agents/stock_manager_agent.py`, `scripts/run_simulation.py`) for the full scripted day. **Eng 5 (initial):** FastAPI REST + WebSocket (`api/routes.py`, `api/websocket.py`) and Gradio multi-tab dashboard (`dashboard/app.py`) are in place; the event bus only streams when the orchestrator handles messages in the same API process (optional future: POST-to-orchestrator for interactive demos). Eng 3’s manual test plan (instantiate agents, call `handle()`) remains valid.
+`scripts/demo_scenario.py` is the curated 5-scene narrative demo for live presentations. All milestones are complete.
 
 ## Architecture
 
@@ -83,7 +91,9 @@ Dashboard (Gradio) ← Event Bus ← all agent actions
 | `api/routes.py` | FastAPI app: health, facility stock/prescriptions/audit/activity/alerts, drugs; shared `EventBus` + `build_default_orchestrator` in lifespan |
 | `api/websocket.py` | WebSocket `/ws/events` — subscribes to event bus topics, pushes JSON to clients |
 | `dashboard/app.py` | Gradio tabs (audit, stock, alerts, activity) polling the REST API |
+| `agents/stock_manager_agent.py` | Stock receipts (upsert batches), expiry scan + quarantine, reorder threshold sweep, restock-request acknowledgement |
 | `scripts/orchestrator_dry_run.py` | Eng 2 — scripted Rx→dispense smoke run via orchestrator |
+| `scripts/run_simulation.py` | Full-day simulation: 3 stock receipts, 15 Rx → dispense, 2 expiry scans, reorder check, anomaly detection, audit report |
 
 ### Database Schema Highlights
 
@@ -132,14 +142,14 @@ Sourced from `stock_management_task_plan.xlsx` (4 phases, 3 milestones).
 | `agents/doctor_agent.py` | Eng 3 | 1 | ✓ Done | Create Rx, check availability, request restock |
 | `config/prompts.py` | Eng 3 | 1 | ✓ Done | LLM system prompts for doctor + gov official |
 | `agents/gov_official_agent.py` | Eng 3 | 2 | ✓ Done | Audit queries, flag anomalies, compliance report |
-| `scripts/demo_scenario.py` | Eng 3 | 3 | ✗ Blocked | Curated demo flow (needs Eng 4 simulation + Milestone 2 wiring; orchestrator is ready) |
-| `agents/stock_manager_agent.py` | Eng 4 | 1 | ✗ Missing | Receive stock, expiry alerts, reorder triggers |
-| `scripts/run_simulation.py` | Eng 4 | 2 | ✗ Missing | 15 Rx, 3 receipts, 2 expiry alerts, 1 anomaly |
+| `scripts/demo_scenario.py` | Eng 3 | 3 | ✓ Done | 5-scene narrative demo: stock delivery → Rx → dispense → expiry/reorder → gov audit |
+| `agents/stock_manager_agent.py` | Eng 4 | 1 | ✓ Done | Receive stock, expiry scan + quarantine, reorder alerts, restock-request handling |
+| `scripts/run_simulation.py` | Eng 4 | 2 | ✓ Done | 15 Rx, 3 receipts, 2 expiry scans, reorder check, anomaly detection, audit report |
 | `api/routes.py` | Eng 5 | 1 | ✓ Done | FastAPI REST + CORS + `Depends(get_db_session)`; `tests/test_api.py` |
 | `dashboard/app.py` | Eng 5 | 2 | ✓ Done | Multi-tab Gradio; uses `settings.api_port` / `simulation_facility_id` |
 | `api/websocket.py` | Eng 5 | 2 | ✓ Done | Bus → WebSocket bridge; `scripts/ws_smoke_test.py` for manual smoke |
 
 **Milestones**:
-- Milestone 1 (Phase 1 end): All components boot independently
-- Milestone 2 (Phase 2 end): End-to-end flow works
-- Milestone 3 (Phase 3 end): Demo-ready system
+- Milestone 1 (Phase 1 end): All components boot independently — ✓ Complete
+- Milestone 2 (Phase 2 end): End-to-end flow works — ✓ Complete
+- Milestone 3 (Phase 3 end): Demo-ready system — ✓ Complete
