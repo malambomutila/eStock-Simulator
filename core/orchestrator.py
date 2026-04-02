@@ -300,7 +300,7 @@ def build_default_orchestrator(
     from agents.dispenser_agent import DispenserAgent
     from agents.doctor_agent import DoctorAgent
     from agents.gov_official_agent import GovOfficialAgent
-    from agents.stub_agents import PlaceholderStockManagerAgent
+    from agents.stock_manager_agent import StockManagerAgent
     from agents.simulation_doctor import SimulationDoctorAgent
 
     orch = Orchestrator(bus=bus)
@@ -309,6 +309,6 @@ def build_default_orchestrator(
         AgentRole.DOCTOR,
         SimulationDoctorAgent() if use_simulation_doctor else DoctorAgent(),
     )
-    orch.register(AgentRole.STOCK_MANAGER, PlaceholderStockManagerAgent())
+    orch.register(AgentRole.STOCK_MANAGER, StockManagerAgent())
     orch.register(AgentRole.GOV_OFFICIAL, GovOfficialAgent())
     return orch

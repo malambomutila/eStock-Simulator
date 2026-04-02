@@ -257,6 +257,50 @@ class DispenseResult(BaseModel):
     status: PrescriptionStatus
 
 
+# Stock Manager payloads
+class StockReceiptRequest(BaseModel):
+    """Payload for STOCK_RECEIVED: a new batch delivery arriving at the facility."""
+
+    drug_id: str
+    batch_number: str
+    quantity: int = Field(..., ge=1)
+    expiry_date: str
+    facility_id: str
+    supplier: str | None = None
+    unit_cost: float | None = None
+    manufactured_date: str | None = None
+    location_in_store: str | None = None
+
+
+class StockReceiptResult(BaseModel):
+    """Returned in AgentResponse.result after a successful stock receipt."""
+
+    drug_id: str
+    batch_number: str
+    stock_level_id: str
+    quantity_added: int
+    new_total: int
+
+
+class ExpiryCheckResult(BaseModel):
+    """Returned in AgentResponse.result after an expiry scan."""
+
+    facility_id: str
+    scanned_batches: int
+    expired_count: int
+    near_expiry_count: int
+    details: list[dict[str, Any]]
+
+
+class ReorderCheckResult(BaseModel):
+    """Returned in AgentResponse.result after a reorder-level check."""
+
+    facility_id: str
+    drugs_checked: int
+    alerts_raised: int
+    details: list[dict[str, Any]]
+
+
 # API response wrappers
 class PaginatedResponse(BaseModel, Generic[T]):
     items: list[T]
