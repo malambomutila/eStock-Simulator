@@ -41,8 +41,13 @@ def main() -> None:
 
     if args.dash:
         try:
-            from dashboard.app import demo  # Eng5 owns dashboard/app.py
-            demo.launch(server_name="0.0.0.0")
+            from dashboard.app import demo, LAUNCH_KWARGS
+            from config.settings import settings
+            demo.launch(
+                server_name="0.0.0.0",
+                server_port=settings.dashboard_port,
+                **LAUNCH_KWARGS,
+            )
         except ImportError:
             # Fallback: launch the audit log component standalone until Eng5's app is ready
             from dashboard.components.audit_log import launch_standalone

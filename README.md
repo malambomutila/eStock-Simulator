@@ -37,8 +37,8 @@ eStock demonstrates how AI agents can automate and simulate the full pharmaceuti
                          ▼
                ┌──────────────────┐
                │    Dashboard     │
-               │ (stock, alerts,  │
-               │  activity, audit)│
+               │ (simulate, stock,│
+               │  alerts, audit)  │
                └──────────────────┘
 ```
 
@@ -46,12 +46,12 @@ eStock demonstrates how AI agents can automate and simulate the full pharmaceuti
 
 | Agent | Role | Key actions |
 |---|---|---|
-| **Doctor** | Clinical prescriber | Creates prescriptions, checks drug availability, requests restocks |
-| **Dispenser** | Pharmacist | Fills prescriptions, deducts stock, logs dispensing events |
-| **Stock Manager** | Warehouse operator | Receives new stock, monitors expiry dates, triggers reorder alerts |
-| **Gov. Official** | Ministry of Health auditor | Runs audit queries, flags anomalies, generates compliance reports |
+| **Doctor** | Clinical prescriber | Creates prescriptions by `drug_id`; drug must exist in DB. Quantity is the caller's value. LLM enriches clinical notes. |
+| **Dispenser** | Pharmacist | Reads the prescription from DB, deducts stock using FEFO (earliest-expiry-first), writes the real post-deduction remaining total back. |
+| **Stock Manager** | Warehouse operator | Receives new stock batches (upsert on batch number), queries the DB total after each insert, raises reorder alerts. |
+| **Gov. Official** | Ministry of Health auditor | Scans audit log for dispensing spikes (vs. 30-day baseline) and controlled-drug orphan prescriptions; generates LLM compliance reports. |
 
-All agents share a single LLM backend with distinct system prompts that shape their persona and decision-making behavior.
+All agents communicate via typed `AgentMessage` / `AgentResponse` envelopes. Agent narration is **grounded** — every number and drug name in the dialogue is read directly from the database response before being passed to the LLM, which may only vary connecting words (see [Grounded narration](#grounded-narration)).
 
 ## Tech stack
 
@@ -61,14 +61,14 @@ All agents share a single LLM backend with distinct system prompts that shape th
 | LLM | OpenAI API (`gpt-4o-mini` by default) |
 | Database | SQLite (via SQLAlchemy) |
 | API | FastAPI + WebSockets |
-| Dashboard | Gradio |
+| Dashboard | Gradio + Plotly |
 | Testing | pytest |
 
 ## Project structure
 
 ```
 eStock-Simulator/
-├── estock.py                        # Unified launcher (seed + API + dashboard + simulation)
+├── estock.py                        # Unified launcher (3 steps: seed → API → dashboard)
 ├── main.py                          # Individual service entry point
 ├── pyproject.toml
 ├── .env.example                     # LLM API key template
@@ -78,7 +78,8 @@ eStock-Simulator/
 │   ├── database.py                  # DB engine & session factory
 │   ├── schemas.py                   # Pydantic v2 schemas & agent message envelopes
 │   ├── orchestrator.py              # Central dispatcher: priority queue, stock locks, follow-ups
-│   └── event_bus.py                 # In-process pub/sub (→ WebSocket bridge)
+│   ├── event_bus.py                 # In-process pub/sub (→ WebSocket bridge)
+│   └── simulation_engine.py         # Scenario runner: 5 built-in scenarios, grounded LLM narration
 │
 ├── agents/                          # AI agent personas
 │   ├── base_agent.py                # Abstract base: handle(), _ok(), _fail(), _make_audit_entry()
@@ -88,12 +89,14 @@ eStock-Simulator/
 │   └── gov_official_agent.py        # Audit queries, anomaly detection, compliance reports
 │
 ├── api/                             # Backend endpoints
-│   ├── routes.py                    # FastAPI REST: stock, prescriptions, audit, alerts, activity
+│   ├── routes.py                    # REST: stock, Rx, audit, alerts, simulate, shutdown
 │   └── websocket.py                 # /ws/events — event bus → WebSocket bridge
 │
 ├── dashboard/                       # Frontend UI
-│   ├── app.py                       # Gradio multi-tab layout
+│   ├── app.py                       # Gradio multi-tab layout (6 tabs, auto-refresh)
 │   └── components/
+│       ├── simulate_tab.py          # 🎬 Animated agent theater (scenarios, polling, Close btn)
+│       ├── charts.py                # Plotly stock bar chart, expiry heatmap, KPI cards
 │       ├── activity_feed.py         # Live agent action ticker
 │       ├── alerts_panel.py          # Low stock & expiry alerts
 │       └── audit_log.py             # Transaction history table
@@ -108,7 +111,7 @@ eStock-Simulator/
 │
 ├── scripts/
 │   ├── seed_db.py                   # Populate database from JSON catalogs
-│   ├── run_simulation.py            # Full scripted day: 15 Rx, 3 receipts, 2 expiry scans, 1 anomaly
+│   ├── run_simulation.py            # Full scripted day (reference data used by simulation engine)
 │   └── orchestrator_dry_run.py      # Smoke test: single Rx → dispense chain
 │
 ├── logs/                            # Created at runtime by estock.py
@@ -151,26 +154,27 @@ cp .env.example .env
 uv run python estock.py
 ```
 
-`estock.py` is the unified launcher. It runs all four steps in sequence — seed the database, start the API, start the dashboard, run the simulation — then keeps the services alive until you press `Ctrl+C`.
+`estock.py` is the unified launcher. It runs three steps, then keeps the services alive until you press `Ctrl+C` (or click **⏻ Close Application** in the dashboard):
 
 ```
-Step 1 / 4  —  Seed database          (55 drugs, 58 stock batches)
-Step 2 / 4  —  Start FastAPI backend  → http://0.0.0.0:8000
-Step 3 / 4  —  Start Gradio dashboard → http://0.0.0.0:7860
-Step 4 / 4  —  Run simulation         (15 Rx · 3 receipts · 2 expiry scans · 1 anomaly)
+Step 1 / 3  —  Seed database          (reset to clean state — 0 prescriptions, 0 audit logs)
+Step 2 / 3  —  Start FastAPI backend  → http://0.0.0.0:8000
+Step 3 / 3  —  Start Gradio dashboard → http://0.0.0.0:7860
 ```
 
-To wipe and re-seed the database before starting:
+To keep existing database data instead of resetting:
 
 ```bash
-uv run python estock.py --reset
+uv run python estock.py --no-reset
 ```
 
-API and dashboard logs are written to `logs/api.log` and `logs/dashboard.log`.
+#### Port management
+
+Before starting each service, `estock.py` automatically kills any orphaned process holding port `8000` or `7860` from a previous session. This prevents the common situation where Ctrl+C leaves background processes running and the next launch fails to bind.
+
+Both ports are fixed — the API will not fall back to `8001`, the dashboard will not fall back to `7861`. If a port is truly in use (e.g. by another application), you will get a clear bind error.
 
 ### Run services individually
-
-If you prefer to run each component in its own terminal:
 
 ```bash
 # Terminal 1 — seed the database (once)
@@ -181,14 +185,9 @@ uv run python main.py --serve
 
 # Terminal 3 — Gradio dashboard (start after API is ready)
 uv run python main.py --dash
-
-# Terminal 4 — run the simulation
-uv run python scripts/run_simulation.py
 ```
 
-### Access from a remote machine
-
-By default, both services bind to `0.0.0.0` and are reachable from any host that can reach the server:
+### Access to Services
 
 | Service | URL |
 |---|---|
@@ -197,13 +196,79 @@ By default, both services bind to `0.0.0.0` and are reachable from any host that
 | WebSocket | `ws://<server-ip>:8000/ws/events` |
 | Dashboard | `http://<server-ip>:7860` |
 
-If you are running behind a firewall or on a VM, ensure ports `8000` and `7860` are open. Add your host to `CORS_ORIGINS` in `.env` if the dashboard's REST calls are blocked by the browser (see [Environment variables](#environment-variables)).
+Ensure ports `8000` and `7860` are open. Add your host to `CORS_ORIGINS` in `.env` if the dashboard's REST calls are blocked (see [Environment variables](#environment-variables)).
 
 ## Running tests
 
 ```bash
 uv run pytest tests/ -v
 ```
+
+## Dashboard
+
+The Gradio dashboard has six tabs. All tabs auto-refresh — there are no manual refresh buttons.
+
+| Tab | Contents |
+|---|---|
+| **🎬 Simulate** | Run scenarios; watch agents converse in real time (see below) |
+| **📊 Overview** | KPI cards (total drugs, low-stock count, anomaly count) + stock bar chart + live activity feed |
+| **📦 Stock** | Full stock level table with batch details |
+| **⏳ Expiry** | Scatter heatmap of batch expiry dates; bubble size = quantity |
+| **🔔 Alerts** | Low-stock and near-expiry alert cards |
+| **⚡ Activity** | Scrollable audit log of every agent action |
+
+### Simulate tab
+
+Select a scenario from the dropdown and click **▶ Run Simulation**. The tab polls the backend every 1.5 seconds and streams each agent's speech into its conversation box as it is generated. All other tabs automatically reflect the database changes from the simulation.
+
+Available scenarios:
+
+| Scenario | What it exercises |
+|---|---|
+| **Anomaly** | Tramadol stock drained → orphan controlled-drug Rx → Gov. Official flags it |
+| **Limited Stock** | 5 high-volume prescriptions → reorder alerts → compliance check |
+| **Expiry Alert** | Near-expiry stock receipts → full batch scan → quarantine |
+| **Random** | GPT-4o-mini generates 4 patient cases → full Doctor → Dispenser chain |
+| **Full Day** | All 15 Rx + 3 receipts + expiry scans + reorder sweep + audit |
+
+Click **⏻ Close Application** to send a shutdown signal to the launcher process, terminating the API and dashboard and freeing both ports cleanly.
+
+## Simulation engine (`core/simulation_engine.py`)
+
+Each scenario is an `async` function that orchestrates real agent calls through the same `Orchestrator` used in production. Scenarios do **not** mock anything — every prescription creates a real `Prescription` row, every dispense deducts real `StockLevel` rows, every stock receipt increments real batch quantities.
+
+### Grounded narration
+
+Agent speech is generated in two steps:
+
+1. **Template built from DB response values** — after each agent call, the engine reads `AgentResponse.result` (which contains database-confirmed values: `drug_name`, `quantity_dispensed`, `stock_remaining`, `new_total`, etc.) and constructs a factual sentence using only those fields.
+
+2. **LLM lightly paraphrases for style** — the template is passed to GPT-4o-mini with the instruction to keep every number, drug name, and quantity exactly as written. A **number-integrity guard** then compares all numeric tokens in the template against the LLM output; if any number has changed, the raw template is used instead.
+
+This means the numbers in agent dialogue are always consistent with the database and with the values shown in the other dashboard tabs.
+
+## API endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/simulate` | Start a simulation scenario in a background thread; returns `run_id` |
+| `GET` | `/api/simulate/{run_id}/feed` | Poll live events and status for a running simulation |
+| `GET` | `/api/simulate` | List all simulation runs in the current process session |
+| `POST` | `/api/shutdown` | Send a graceful shutdown signal to the launcher process |
+
+## Key design decisions
+
+**FEFO dispensing** — the dispenser always consumes from the earliest-expiring batch first to minimise waste.
+
+**Immutable audit log** — every agent action appends a row to `AuditLog`. No rows are ever updated or deleted. This table is the source of truth for compliance reporting and anomaly detection.
+
+**Per-drug stock locks** — the orchestrator acquires an `asyncio.Lock` keyed by `(facility_id, drug_id)` before dispatching any message that touches stock, preventing concurrent dispense requests from double-spending the same batch.
+
+**Facility isolation** — all data carries a `facility_id`. The default is `FACILITY-001` (configurable in `.env`). The architecture is multi-facility by design.
+
+**Graceful LLM fallback** — clinical notes, compliance narratives, and agent dialogue are enriched by the LLM when `OPENAI_API_KEY` is set, but every agent falls back to template strings if the key is absent or the call fails. The system is fully functional without an API key; grounded narration simply returns the raw template.
+
+**Clean process lifecycle** — `estock.py` exports its own PID as `ESTOCK_LAUNCHER_PID` into each child process's environment. The `/api/shutdown` endpoint reads this value and sends `SIGTERM` to the launcher, which then terminates API and dashboard child processes and frees both ports before exiting.
 
 ## Environment variables
 
@@ -220,36 +285,10 @@ uv run pytest tests/ -v
 | `ANOMALY_SPIKE_MULTIPLIER` | Consumption multiple over 30-day daily average to flag a spike | `3.0` |
 | `API_HOST` | FastAPI bind address (`0.0.0.0` for remote access) | `0.0.0.0` |
 | `API_PORT` | FastAPI port | `8000` |
-| `API_RELOAD` | Enable uvicorn auto-reload (set `false` in production) | `true` |
+| `API_RELOAD` | Enable uvicorn auto-reload (overridden to `false` by `estock.py`) | `true` |
 | `CORS_ORIGINS` | JSON list of allowed CORS origins for the REST API | see `.env.example` |
 
-## Demo walkthrough
-
-Run `uv run python estock.py` and open the dashboard at `http://<server>:7860`. The simulation plays out in six phases:
-
-1. **Stock receipts** — The stock manager receives three deliveries: Amoxicillin (+300 units), Paracetamol (+500 units), and Artemether-Lumefantrine (+200 units). Each receipt is logged with batch number, supplier, expiry date, and updated totals.
-
-2. **15 prescriptions** — The doctor agent creates prescriptions across six drugs (antibiotics, analgesics, antimalarials, a controlled opioid). The orchestrator auto-chains each to the dispenser. 14 are fulfilled; the 15th — a second Tramadol prescription after stock is exhausted — returns `OUT_OF_STOCK`.
-
-3. **Expiry scans** — The stock manager scans all 61 batches twice: once facility-wide (365-day window) and once narrowed to Amoxicillin (180-day window). Near-expiry batches are flagged; any truly expired batches are quarantined automatically.
-
-4. **Reorder check** — A full sweep across all 55 active drugs surfaces those below their reorder threshold. Each triggers a `REORDER_ALERT_RAISED` audit entry visible in the dashboard Alerts tab.
-
-5. **Anomaly detected** — The government official scans the last 24 hours and finds the Tramadol prescription that was created but never dispensed — a controlled-drug orphan. It is flagged as an anomaly with `is_anomaly=True` in the audit log.
-
-6. **Compliance report** — The government official generates a full audit report covering all prescriptions, dispensing events, anomaly counts, and a narrative LLM summary (when an API key is configured).
-
-## Key design decisions
-
-**FEFO dispensing** — the dispenser always consumes from the earliest-expiring batch first to minimise waste.
-
-**Immutable audit log** — every agent action appends a row to `AuditLog`. No rows are ever updated or deleted. This table is the source of truth for compliance reporting and anomaly detection.
-
-**Per-drug stock locks** — the orchestrator acquires an `asyncio.Lock` keyed by `(facility_id, drug_id)` before dispatching any message that touches stock, preventing concurrent dispense requests from double-spending the same batch.
-
-**Facility isolation** — all data carries a `facility_id`. The default is `FACILITY-001` (configurable in `.env`). The architecture is multi-facility by design.
-
-**Graceful LLM fallback** — doctor clinical notes and government compliance narratives are enriched by the LLM when `OPENAI_API_KEY` is set, but every agent falls back gracefully if the key is absent or the call fails. The system is fully functional without an API key.
+`DASHBOARD_PORT` defaults to `7860` and is controlled via `settings.dashboard_port` in code (not yet surfaced in `.env`).
 
 ## Contributing
 

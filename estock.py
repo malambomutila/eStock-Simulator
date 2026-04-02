@@ -2,19 +2,17 @@
 """
 estock.py — Single-file launcher for the eStock Simulator.
 
-Runs the complete system in order:
-  1. Seeds the database (drugs + stock batches)
-  2. Starts the FastAPI backend        → http://127.0.0.1:8000
-  3. Starts the Gradio dashboard       → http://127.0.0.1:7860
-  4. Runs the full scripted simulation (15 Rx · 3 receipts · 2 expiry scans · 1 anomaly)
+Starts the system in three steps:
+  1. Resets and seeds the database (clean slate — zero prescriptions / audit logs)
+  2. Starts the FastAPI backend        → http://0.0.0.0:8000
+  3. Starts the Gradio dashboard       → http://0.0.0.0:7860
 
-After the simulation completes the API and dashboard stay running.
-Open the dashboard and click "Refresh now" on each tab to explore results.
+The dashboard stays running. Open the 🎬 Simulate tab to run scenarios.
 Press Ctrl+C to stop everything.
 
 Usage:
-    uv run python estock.py           # normal first run
-    uv run python estock.py --reset   # drop + re-seed DB, then run
+    uv run python estock.py                # fresh reset + start
+    uv run python estock.py --no-reset     # keep existing DB data, just start
 """
 
 from __future__ import annotations
@@ -28,13 +26,12 @@ import time
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT   = Path(__file__).resolve().parent
 PYTHON = sys.executable
 LOG_DIR = ROOT / "logs"
 
-# Background processes we need to clean up on exit
-_procs: list[subprocess.Popen] = []
-_log_files: list = []
+_procs:     list[subprocess.Popen] = []
+_log_files: list                   = []
 
 
 # ── Cleanup ────────────────────────────────────────────────────────────────────
@@ -63,7 +60,7 @@ def _shutdown(sig=None, frame=None) -> None:
     sys.exit(0)
 
 
-signal.signal(signal.SIGINT, _shutdown)
+signal.signal(signal.SIGINT,  _shutdown)
 signal.signal(signal.SIGTERM, _shutdown)
 
 
@@ -71,29 +68,20 @@ signal.signal(signal.SIGTERM, _shutdown)
 
 def _banner(title: str) -> None:
     bar = "─" * 64
-    print(f"\n{bar}")
-    print(f"  {title}")
-    print(bar, flush=True)
+    print(f"\n{bar}\n  {title}\n{bar}", flush=True)
 
 
-def _ok(msg: str) -> None:
-    print(f"  ✓  {msg}", flush=True)
-
-
-def _info(msg: str) -> None:
-    print(f"  ·  {msg}", flush=True)
-
-
-def _err(msg: str) -> None:
-    print(f"  ✗  {msg}", flush=True)
+def _ok(msg: str)   -> None: print(f"  ✓  {msg}", flush=True)
+def _info(msg: str) -> None: print(f"  ·  {msg}", flush=True)
+def _err(msg: str)  -> None: print(f"  ✗  {msg}", flush=True)
 
 
 def _base_env() -> dict[str, str]:
-    """Environment variables inherited by all child processes."""
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(ROOT)
-    env["API_RELOAD"] = "false"       # disable uvicorn file-watcher for subprocess stability
-    env["PYTHONUNBUFFERED"] = "1"     # ensures subprocess output is not buffered
+    env["PYTHONPATH"]           = str(ROOT)
+    env["API_RELOAD"]           = "false"
+    env["PYTHONUNBUFFERED"]     = "1"
+    env["ESTOCK_LAUNCHER_PID"]  = str(os.getpid())   # used by /api/shutdown
     return env
 
 
@@ -105,20 +93,53 @@ def _open_log(name: str):
     return f, path
 
 
-def _run(*cmd: str, check: bool = True) -> int:
-    """Run a command in the foreground, inheriting this process's stdout/stderr."""
+def _run(*cmd: str) -> int:
     result = subprocess.run(list(cmd), cwd=ROOT, env=_base_env())
-    if check and result.returncode != 0:
+    if result.returncode != 0:
         _err(f"Command failed (exit {result.returncode}): {' '.join(cmd)}")
         _shutdown()
     return result.returncode
 
 
+def _free_port(port: int, label: str = "") -> None:
+    """Kill any process currently listening on *port* so we can claim it cleanly."""
+    name = f"{label} (port {port})" if label else f"port {port}"
+    killed = False
+
+    # Primary: fuser -k (most Linux distros)
+    try:
+        r = subprocess.run(
+            ["fuser", "-k", f"{port}/tcp"],
+            capture_output=True, timeout=5,
+        )
+        if r.returncode == 0:
+            killed = True
+    except FileNotFoundError:
+        # Fallback: lsof (available on Ubuntu/Debian without psmisc)
+        try:
+            r2 = subprocess.run(
+                ["lsof", "-ti", f"tcp:{port}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            pids = [p.strip() for p in r2.stdout.splitlines() if p.strip()]
+            for pid in pids:
+                try:
+                    subprocess.run(["kill", "-9", pid], timeout=3)
+                except Exception:
+                    pass
+            if pids:
+                killed = True
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    if killed:
+        _info(f"Released {name} (orphaned process killed)")
+        time.sleep(1)   # give the OS a moment to release the socket
+
+
 def _spawn(*cmd: str, log_name: str) -> tuple[subprocess.Popen, Path]:
-    """
-    Start a long-running process in the background.
-    stdout+stderr go to a log file so the console stays clean.
-    """
     log_f, log_path = _open_log(log_name)
     proc = subprocess.Popen(
         list(cmd),
@@ -131,10 +152,9 @@ def _spawn(*cmd: str, log_name: str) -> tuple[subprocess.Popen, Path]:
     return proc, log_path
 
 
-def _wait_for_http(url: str, label: str, timeout: int = 45) -> bool:
-    """Poll url every second until it returns HTTP 200 or timeout expires."""
+def _wait_for_http(url: str, label: str, timeout: int = 60) -> bool:
     deadline = time.time() + timeout
-    attempt = 0
+    attempt  = 0
     while time.time() < deadline:
         try:
             with urllib.request.urlopen(url, timeout=2) as resp:
@@ -152,7 +172,6 @@ def _wait_for_http(url: str, label: str, timeout: int = 45) -> bool:
 
 
 def _check_alive(label: str, proc: subprocess.Popen, log_path: Path) -> None:
-    """Abort if a background process has already died."""
     if proc.poll() is not None:
         _err(f"{label} exited early (code {proc.returncode}).")
         _info(f"Check the log: {log_path}")
@@ -168,9 +187,9 @@ def main() -> None:
         epilog=__doc__,
     )
     parser.add_argument(
-        "--reset",
+        "--no-reset",
         action="store_true",
-        help="Drop and re-seed the database before starting.",
+        help="Keep existing database data instead of resetting to a clean state.",
     )
     args = parser.parse_args()
 
@@ -180,13 +199,19 @@ def main() -> None:
     _info(f"Logs dir     : {LOG_DIR}")
 
     # ── Step 1: Seed database ──────────────────────────────────────────────────
-    _banner("Step 1 / 4  —  Seed database")
-    seed_flag = "--seed-reset" if args.reset else "--seed"
-    _run(PYTHON, "main.py", seed_flag)
-    _ok("Database seeded")
+    _banner("Step 1 / 3  —  Initialise database")
+    if args.no_reset:
+        _info("--no-reset: keeping existing database data")
+        _run(PYTHON, "main.py", "--seed")
+        _ok("Database ready (existing data preserved)")
+    else:
+        _info("Resetting database to clean state (use --no-reset to skip)")
+        _run(PYTHON, "main.py", "--seed-reset")
+        _ok("Database reset and seeded  (0 prescriptions · 0 audit logs)")
 
     # ── Step 2: FastAPI backend ────────────────────────────────────────────────
-    _banner("Step 2 / 4  —  Start FastAPI backend  (port 8000)")
+    _banner("Step 2 / 3  —  Start FastAPI backend  (port 8000)")
+    _free_port(8000, "API")
     api_proc, api_log = _spawn(PYTHON, "main.py", "--serve", log_name="api.log")
     _info(f"API log → {api_log}")
 
@@ -195,62 +220,54 @@ def main() -> None:
         _err("API did not become ready — check logs/api.log")
         _shutdown()
 
+    # Confirm the *new* process is the one that's alive (not an old orphan)
     _check_alive("API server", api_proc, api_log)
-    _ok("REST API    →  http://127.0.0.1:8000")
-    _ok("Swagger UI  →  http://127.0.0.1:8000/docs")
-    _ok("WebSocket   →  ws://127.0.0.1:8000/ws/events")
+    _ok("REST API    →  http://0.0.0.0:8000")
+    _ok("Swagger UI  →  http://0.0.0.0:8000/docs")
+    _ok("WebSocket   →  ws://0.0.0.0:8000/ws/events")
 
     # ── Step 3: Gradio dashboard ───────────────────────────────────────────────
-    _banner("Step 3 / 4  —  Start Gradio dashboard  (port 7860)")
+    _banner("Step 3 / 3  —  Start Gradio dashboard  (port 7860)")
+    _free_port(7860, "Dashboard")
     dash_proc, dash_log = _spawn(PYTHON, "main.py", "--dash", log_name="dashboard.log")
     _info(f"Dashboard log → {dash_log}")
 
-    dash_ready = _wait_for_http("http://127.0.0.1:7860", "Dashboard", timeout=45)
+    dash_ready = _wait_for_http("http://127.0.0.1:7860", "Dashboard", timeout=90)
     _check_alive("Gradio dashboard", dash_proc, dash_log)
 
     if dash_ready:
-        _ok("Dashboard  →  http://127.0.0.1:7860")
+        _ok("Dashboard  →  http://0.0.0.0:7860")
     else:
-        _info("Dashboard may still be loading — try http://127.0.0.1:7860 in a moment")
+        _info("Dashboard may still be loading — try the URL in a moment")
 
-    # ── Step 4: Simulation ─────────────────────────────────────────────────────
-    _banner("Step 4 / 4  —  Run simulation")
-    _info("15 prescriptions · 3 stock receipts · 2 expiry scans · 1 anomaly")
-    _info("Simulation output follows:\n")
+    # ── Ready ──────────────────────────────────────────────────────────────────
+    _banner("System ready  —  press Ctrl+C to stop")
+    print(f"""
+  Open the dashboard and use the 🎬 Simulate tab to run a scenario.
+  All agent dialogue is generated live by GPT-4o-mini.
 
-    # Small buffer so the dashboard finishes its startup before agents start writing
-    time.sleep(2)
+  REST API   →  http://0.0.0.0:8000
+  Swagger    →  http://0.0.0.0:8000/docs
+  Dashboard  →  http://0.0.0.0:7860
 
-    # DB already seeded in step 1 — run without --seed to avoid duplicate inserts
-    _run(PYTHON, "scripts/run_simulation.py")
+  Simulate tab scenarios:
+    Anomaly       — controlled-drug orphan prescription → Gov flags it
+    Limited Stock — high-volume day → reorder alerts
+    Expiry Alert  — near-expiry batch scan + quarantine
+    Random        — LLM picks 4 patient cases → full chain
+    Full Day      — all 15 Rx + receipts + expiry + audit
 
-    # ── All done — keep services running ──────────────────────────────────────
-    _banner("All services running  —  press Ctrl+C to stop")
-    lines = [
-        "",
-        "  REST API   →  http://127.0.0.1:8000",
-        "  Swagger    →  http://127.0.0.1:8000/docs",
-        "  Dashboard  →  http://127.0.0.1:7860",
-        "",
-        "  Dashboard tabs to explore:",
-        "    Audit Log  — every agent action, anomaly flags, correlation IDs",
-        "    Stock      — live inventory totals per drug",
-        "    Alerts     — low-stock + near-expiry warnings",
-        "    Activity   — last 80 audit entries (role · action · anomaly flag)",
-        "",
-        "  Agent logs:",
-        f"    tail -f {api_log}",
-        f"    tail -f {dash_log}",
-        "",
-    ]
-    print("\n".join(lines), flush=True)
+  Logs:
+    tail -f {api_log}
+    tail -f {dash_log}
+""", flush=True)
 
-    # Health-watch loop — exit if a service crashes
+    # Health-watch loop
     while True:
         time.sleep(3)
         for label, proc, log in [
             ("API server", api_proc, api_log),
-            ("Dashboard", dash_proc, dash_log),
+            ("Dashboard",  dash_proc, dash_log),
         ]:
             if proc.poll() is not None:
                 _err(f"{label} exited unexpectedly (code {proc.returncode}).")

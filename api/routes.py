@@ -7,12 +7,16 @@ FastAPI application: REST API, shared EventBus + orchestrator, WebSocket stream.
 from __future__ import annotations
 
 import logging
+import os
+import signal
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from importlib.metadata import PackageNotFoundError, version as pkg_version
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
@@ -427,6 +431,89 @@ def get_facility_alerts(
             )
 
     return AlertsResponse(facility_id=facility_id, items=alerts)
+
+
+# ── Simulation endpoints ───────────────────────────────────────────────────────
+
+class SimulateRequest(BaseModel):
+    scenario: str = "Full Day"
+
+
+class SimulateStartResponse(BaseModel):
+    run_id: str
+    scenario: str
+    status: str
+
+
+class SimulateFeedResponse(BaseModel):
+    run_id: str
+    scenario: str
+    status: str
+    started_at: str
+    error: str | None
+    events: list[dict]
+
+
+@app.post("/api/simulate", response_model=SimulateStartResponse, tags=["simulate"])
+def post_simulate(body: SimulateRequest) -> SimulateStartResponse:
+    """Start a simulation scenario in the background. Returns run_id for polling."""
+    from core.simulation_engine import SCENARIOS, start_simulation
+
+    scenario = body.scenario if body.scenario in SCENARIOS else "Full Day"
+    run_id = start_simulation(scenario)
+    return SimulateStartResponse(run_id=run_id, scenario=scenario, status="starting")
+
+
+@app.get(
+    "/api/simulate/{run_id}/feed",
+    response_model=SimulateFeedResponse,
+    tags=["simulate"],
+)
+def get_simulate_feed(run_id: str) -> SimulateFeedResponse:
+    """Poll the live event stream for a running or completed simulation."""
+    from core.simulation_engine import get_run
+
+    run = get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Simulation run '{run_id}' not found.")
+    snap = run.snapshot()
+    return SimulateFeedResponse(**snap)
+
+
+@app.get("/api/simulate", tags=["simulate"])
+def list_simulations() -> dict:
+    """List all simulation runs in this process session."""
+    from core.simulation_engine import list_runs
+    return {"runs": list_runs()}
+
+
+@app.post("/api/shutdown", tags=["control"])
+def shutdown_application() -> dict:
+    """
+    Gracefully stop the entire application (API + Dashboard).
+
+    Sends SIGTERM to the estock.py launcher process group, which triggers its
+    _shutdown() handler and terminates all child processes.  Falls back to
+    killing the API process itself if the launcher PID is unavailable.
+    """
+    launcher_pid_str = os.environ.get("ESTOCK_LAUNCHER_PID", "")
+
+    def _do_shutdown() -> None:
+        import time
+        time.sleep(0.3)  # let the HTTP response reach the client first
+        try:
+            if launcher_pid_str:
+                pid = int(launcher_pid_str)
+                os.kill(pid, signal.SIGTERM)
+            else:
+                # No launcher PID — kill the whole process group
+                os.kill(0, signal.SIGTERM)
+        except Exception:
+            # Last resort: kill own process, estock.py watch-loop will detect it
+            os.kill(os.getpid(), signal.SIGTERM)
+
+    threading.Thread(target=_do_shutdown, daemon=True).start()
+    return {"status": "shutting_down", "message": "Application shutdown initiated."}
 
 
 @app.get("/api/drugs", response_model=DrugListResponse, tags=["drugs"])
